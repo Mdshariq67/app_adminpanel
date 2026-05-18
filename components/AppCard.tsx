@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -51,7 +51,7 @@ export default function AppCard({ app, onDelete }: AppCardProps) {
     const router = useRouter();
     const [appState, setAppState] = useState<AppConfig>(app);
     const [isDeleting, setIsDeleting] = useState(false);
-    const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
+    const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
     // Poll build status
     useEffect(() => {
@@ -60,9 +60,9 @@ export default function AppCard({ app, onDelete }: AppCardProps) {
             appState.lastBuildStatus === "in_progress";
 
         if (!shouldPoll) {
-            if (pollInterval) {
-                clearInterval(pollInterval);
-                setPollInterval(null);
+            if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
             }
             return;
         }
@@ -70,54 +70,53 @@ export default function AppCard({ app, onDelete }: AppCardProps) {
         const pat = sessionStorage.getItem("github_pat");
         if (!pat || !appState.lastRunId) return;
 
+        const runId = parseInt(appState.lastRunId);
+        const slug = appState.slug;
+
         const checkStatus = async () => {
             try {
-                const status = await getBuildStatus(pat, parseInt(appState.lastRunId!));
+                const status = await getBuildStatus(pat, runId);
 
-                // Update local state
-                const newStatus = status.status === "completed" ? "success" : status.status;
                 const newBuildStatus: BuildStatus =
                     status.status === "completed"
                         ? status.conclusion === "success"
                             ? "success"
                             : "failure"
-                        : (newStatus as BuildStatus);
+                        : (status.status as BuildStatus);
 
-                let apkUrl = appState.lastApkUrl;
+                setAppState((prev) => {
+                    if (prev.lastBuildStatus === newBuildStatus) return prev;
+                    const updated = {
+                        ...prev,
+                        lastBuildStatus: newBuildStatus,
+                        lastBuiltAt:
+                            newBuildStatus === "success"
+                                ? new Date().toISOString()
+                                : prev.lastBuiltAt,
+                    };
+                    saveApp(updated);
+                    return updated;
+                });
 
-                // If just succeeded, get the release URL
-                if (
-                    appState.lastBuildStatus !== "success" &&
-                    newBuildStatus === "success"
-                ) {
+                if (newBuildStatus === "success") {
+                    if (pollIntervalRef.current) {
+                        clearInterval(pollIntervalRef.current);
+                        pollIntervalRef.current = null;
+                    }
                     try {
-                        apkUrl = await getReleaseUrl(pat, appState.slug);
+                        const apkUrl = await getReleaseUrl(pat, slug);
+                        setAppState((prev) => {
+                            const updated = { ...prev, lastApkUrl: apkUrl };
+                            saveApp(updated);
+                            return updated;
+                        });
                     } catch (err) {
                         console.error("Failed to get release URL:", err);
                     }
-                }
-
-                const updatedApp = {
-                    ...appState,
-                    lastBuildStatus: newBuildStatus,
-                    lastApkUrl: apkUrl,
-                    lastBuiltAt:
-                        newBuildStatus === "success"
-                            ? new Date().toISOString()
-                            : appState.lastBuiltAt,
-                };
-
-                setAppState(updatedApp);
-                saveApp(updatedApp);
-
-                // If status changed from in_progress to something else, stop polling
-                if (
-                    appState.lastBuildStatus === "in_progress" &&
-                    newBuildStatus !== "in_progress"
-                ) {
-                    if (pollInterval) {
-                        clearInterval(pollInterval);
-                        setPollInterval(null);
+                } else if (newBuildStatus === "failure") {
+                    if (pollIntervalRef.current) {
+                        clearInterval(pollIntervalRef.current);
+                        pollIntervalRef.current = null;
                     }
                 }
             } catch (err) {
@@ -126,13 +125,16 @@ export default function AppCard({ app, onDelete }: AppCardProps) {
         };
 
         checkStatus();
-        const interval = setInterval(checkStatus, 8000);
-        setPollInterval(interval);
+        pollIntervalRef.current = setInterval(checkStatus, 8000);
 
         return () => {
-            if (interval) clearInterval(interval);
+            if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+            }
         };
-    }, [appState, pollInterval]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [appState.lastBuildStatus, appState.lastRunId]);
 
     const handleDelete = useCallback(async () => {
         if (
