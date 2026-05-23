@@ -11,7 +11,8 @@ const nextConfig: NextConfig = {
             value: [
               "default-src 'self'",
               "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
-              "connect-src 'self' api.github.com",
+              "connect-src 'self' api.github.com *.googleapis.com *.firebaseio.com *.firestore.googleapis.com",
+              "frame-src *",
               "img-src * data:",
               "font-src 'self' fonts.gstatic.com",
               "style-src 'self' fonts.googleapis.com 'unsafe-inline'",
@@ -33,7 +34,7 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  allowedDevOrigins: ["192.168.1.12"],
+  allowedDevOrigins: ["192.168.1.12", "192.168.1.7", "192.168.0.150", "192.168.1.11"],
 };
 
 export default nextConfig;

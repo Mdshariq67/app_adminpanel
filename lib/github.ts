@@ -1,3 +1,7 @@
+/**
+ * GitHub API integration for triggering Flutter APK builds
+ */
+
 export interface GitHubBuildInput {
     app_name: string;
     app_slug: string;
@@ -18,31 +22,31 @@ export interface BuildRunInfo {
     html_url: string;
 }
 
-const authHeader = (pat: string) => ({ Authorization: `Bearer ${pat}` });
-
-export async function validatePAT(pat: string): Promise<boolean> {
-    try {
-        const res = await fetch('/api/github/validate', {
-            headers: authHeader(pat),
-        });
-        return res.ok;
-    } catch {
-        return false;
-    }
-}
+const getGithubHeaders = (pat: string) => ({
+    "Authorization": `Bearer ${pat}`,
+    "X-GitHub-Api-Version": "2022-11-28",
+    "Content-Type": "application/json",
+    "Accept": "application/vnd.github+json",
+});
 
 export async function triggerBuild(
     pat: string,
     config: GitHubBuildInput
 ): Promise<number> {
-    const res = await fetch('/api/github/trigger', {
-        method: 'POST',
-        headers: {
-            ...authHeader(pat),
-            'Content-Type': 'application/json',
-        },
+    const owner = process.env.NEXT_PUBLIC_GITHUB_OWNER;
+    const repo = process.env.NEXT_PUBLIC_GITHUB_REPO;
+
+    if (!owner || !repo) {
+        throw new Error("GitHub owner or repo not configured");
+    }
+
+    const url = `https://api.github.com/repos/${owner}/${repo}/actions/workflows/build-apk.yml/dispatches`;
+
+    const response = await fetch(url, {
+        method: "POST",
+        headers: getGithubHeaders(pat),
         body: JSON.stringify({
-            ref: 'main',
+            ref: "main",
             inputs: {
                 app_name: config.app_name,
                 app_slug: config.app_slug,
@@ -58,69 +62,142 @@ export async function triggerBuild(
         }),
     });
 
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `Failed to trigger build: ${res.status}`);
+    if (!response.ok) {
+        const error = await response.text();
+        throw new Error(
+            `Failed to trigger build: ${response.status} ${error}`
+        );
     }
 
+    // Wait 3 seconds then find the latest run
     await new Promise((resolve) => setTimeout(resolve, 3000));
-    return findLatestRun(pat, config.app_slug);
+    const runId = await findLatestRun(pat, config.app_slug);
+
+    return runId;
 }
 
 export async function findLatestRun(
     pat: string,
-    _appSlug: string
+    appSlug: string
 ): Promise<number> {
-    const res = await fetch('/api/github/runs', {
-        headers: authHeader(pat),
-    });
+    const owner = process.env.NEXT_PUBLIC_GITHUB_OWNER;
+    const repo = process.env.NEXT_PUBLIC_GITHUB_REPO;
 
-    if (!res.ok) {
-        throw new Error(`Failed to fetch runs: ${res.status}`);
+    if (!owner || !repo) {
+        throw new Error("GitHub owner or repo not configured");
     }
 
-    const data = await res.json();
-    const runs: Array<{ id: number; created_at: string }> = data.runs || [];
+    const url = `https://api.github.com/repos/${owner}/${repo}/actions/runs?event=workflow_dispatch&per_page=10`;
 
-    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+    const response = await fetch(url, {
+        method: "GET",
+        headers: getGithubHeaders(pat),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to fetch runs: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const runs = data.workflow_runs || [];
+
+    // Find the most recent run created within the last 2 minutes
+    const now = new Date();
+    const twoMinutesAgo = new Date(now.getTime() - 2 * 60 * 1000);
 
     for (const run of runs) {
-        if (new Date(run.created_at) >= twoMinutesAgo) {
+        const createdAt = new Date(run.created_at);
+        if (createdAt >= twoMinutesAgo) {
             return run.id;
         }
     }
 
-    throw new Error('Could not find recent workflow run');
+    throw new Error("Could not find recent workflow run");
 }
 
 export async function getBuildStatus(
     pat: string,
     runId: number
 ): Promise<BuildRunInfo> {
-    const res = await fetch(`/api/github/status?runId=${runId}`, {
-        headers: authHeader(pat),
-    });
+    const owner = process.env.NEXT_PUBLIC_GITHUB_OWNER;
+    const repo = process.env.NEXT_PUBLIC_GITHUB_REPO;
 
-    if (!res.ok) {
-        throw new Error(`Failed to get build status: ${res.status}`);
+    if (!owner || !repo) {
+        throw new Error("GitHub owner or repo not configured");
     }
 
-    return res.json();
+    const url = `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}`;
+
+    const response = await fetch(url, {
+        method: "GET",
+        headers: getGithubHeaders(pat),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to get build status: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    return {
+        id: data.id,
+        status: data.status,
+        conclusion: data.conclusion,
+        html_url: data.html_url,
+    };
 }
 
 export async function getReleaseUrl(
     pat: string,
     appSlug: string
 ): Promise<string> {
-    const res = await fetch(`/api/github/release?slug=${appSlug}`, {
-        headers: authHeader(pat),
-    });
+    const owner = process.env.NEXT_PUBLIC_GITHUB_OWNER;
+    const repo = process.env.NEXT_PUBLIC_GITHUB_REPO;
 
-    if (!res.ok) {
-        throw new Error(`Failed to get release: ${res.status}`);
+    if (!owner || !repo) {
+        throw new Error("GitHub owner or repo not configured");
     }
 
-    const data = await res.json();
-    if (!data.url) throw new Error('No APK asset found in release');
-    return data.url;
+    const url = `https://api.github.com/repos/${owner}/${repo}/releases/tags/${appSlug}`;
+
+    const response = await fetch(url, {
+        method: "GET",
+        headers: getGithubHeaders(pat),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to get release: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const assets = data.assets || [];
+
+    const apkAsset = assets.find((asset: any) => asset.name.endsWith(".apk"));
+    if (!apkAsset) {
+        throw new Error("No APK asset found in release");
+    }
+
+    return apkAsset.browser_download_url;
+}
+
+export async function validatePAT(pat: string): Promise<boolean> {
+    const owner = process.env.NEXT_PUBLIC_GITHUB_OWNER;
+    const repo = process.env.NEXT_PUBLIC_GITHUB_REPO;
+
+    if (!owner || !repo) {
+        throw new Error("GitHub owner or repo not configured");
+    }
+
+    const url = `https://api.github.com/repos/${owner}/${repo}`;
+
+    try {
+        const response = await fetch(url, {
+            method: "GET",
+            headers: getGithubHeaders(pat),
+        });
+
+        return response.ok;
+    } catch {
+        return false;
+    }
 }

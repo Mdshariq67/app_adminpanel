@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
 import {
     Select,
     SelectContent,
@@ -12,11 +11,11 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { AppConfig, generateSlug, saveApp, FontFamily } from "@/lib/storage";
 import { triggerBuild } from "@/lib/github";
 import { toast } from "sonner";
+import PhoneShell from "@/components/preview/PhoneShell";
 
 interface AppFormProps {
     app?: AppConfig;
@@ -59,12 +58,12 @@ export default function AppForm({ app, isEditMode = false }: AppFormProps) {
     const [logoError, setLogoError] = useState(false);
     const [hasPAT, setHasPAT] = useState(false);
 
-    // Check if PAT is available on mount
     useEffect(() => {
         if (typeof window !== "undefined") {
             setHasPAT(!!sessionStorage.getItem("github_pat"));
         }
     }, []);
+
     useEffect(() => {
         if (!isEditMode && formData.name) {
             const newSlug = generateSlug(formData.name);
@@ -111,7 +110,7 @@ export default function AppForm({ app, isEditMode = false }: AppFormProps) {
     };
 
     const handleSubmit = useCallback(
-        async (e: React.FormEvent) => {
+        async (e: React.FormEvent<HTMLFormElement>) => {
             e.preventDefault();
 
             if (!formData.name.trim()) {
@@ -133,7 +132,6 @@ export default function AppForm({ app, isEditMode = false }: AppFormProps) {
             setIsLoading(true);
 
             try {
-                // Update version code if in edit mode
                 let configToSubmit = { ...formData };
                 if (isEditMode) {
                     configToSubmit = {
@@ -142,14 +140,12 @@ export default function AppForm({ app, isEditMode = false }: AppFormProps) {
                     };
                 }
 
-                // Save app to localStorage with queued status
                 const appToSave = {
                     ...configToSubmit,
                     lastBuildStatus: "queued" as const,
                 };
                 saveApp(appToSave);
 
-                // Trigger build
                 const runId = await triggerBuild(pat, {
                     app_name: configToSubmit.name,
                     app_slug: configToSubmit.slug,
@@ -165,7 +161,6 @@ export default function AppForm({ app, isEditMode = false }: AppFormProps) {
                         : configToSubmit.versionCode,
                 });
 
-                // Save run ID
                 const finalApp = {
                     ...appToSave,
                     lastRunId: runId.toString(),
@@ -185,15 +180,32 @@ export default function AppForm({ app, isEditMode = false }: AppFormProps) {
         [formData, isEditMode, router]
     );
 
-    // Generate dynamic font import URL
-    const fontImportUrl = `https://fonts.googleapis.com/css2?family=${formData.fontFamily.replace(
-        / /g,
-        "+"
-    )}:wght@400;600&display=swap`;
+    // Rebuild preview URL whenever branding fields change.
+    // key={previewUrl} on the iframe causes React to remount it on every change.
+    const previewUrl = useMemo(() => {
+        const params = new URLSearchParams({
+            primary: formData.primaryColor.replace("#", ""),
+            secondary: formData.secondaryColor.replace("#", ""),
+            accent: formData.accentColor.replace("#", ""),
+            appName: formData.name || "My App",
+            description: formData.description || "",
+            fontFamily: formData.fontFamily || "Poppins",
+            screen: "home",
+            mode: "preview",
+        });
+        return `/preview?${params.toString()}`;
+    }, [
+        formData.primaryColor,
+        formData.secondaryColor,
+        formData.accentColor,
+        formData.name,
+        formData.description,
+        formData.fontFamily,
+    ]);
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-full">
-            {/* Left Panel - Form */}
+            {/* Left Panel — Form */}
             <div className="lg:col-span-2 overflow-y-auto">
                 <form onSubmit={handleSubmit} className="space-y-6">
                     {/* App Name */}
@@ -379,7 +391,7 @@ export default function AppForm({ app, isEditMode = false }: AppFormProps) {
                         </p>
                     </div>
 
-                    {/* Submit Button */}
+                    {/* Submit */}
                     <div className="pt-4 border-t">
                         <Button
                             type="submit"
@@ -403,84 +415,32 @@ export default function AppForm({ app, isEditMode = false }: AppFormProps) {
                 </form>
             </div>
 
-            {/* Right Panel - Live Preview */}
-            <div className="hidden lg:block sticky top-0 h-screen overflow-y-auto">
-                <div className="bg-gray-100 p-4 rounded-lg h-full">
-                    <h3 className="text-sm font-semibold text-gray-700 mb-4">Preview</h3>
+            {/* Right Panel — Live Preview (sticky) */}
+            <div className="hidden lg:block">
+                <div style={{
+                    position: "sticky",
+                    top: 24,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 12,
+                }}>
+                    <p style={{ fontSize: 13, color: "#6B7280", margin: 0, fontWeight: 500 }}>
+                        Live Preview
+                    </p>
 
-                    {/* Phone Frame */}
-                    <style>{`@import url('${fontImportUrl}');`}</style>
+                    <PhoneShell width={280} height={560}>
+                        <iframe
+                            key={previewUrl}
+                            src={previewUrl}
+                            style={{ width: "100%", height: "100%", border: "none" }}
+                            title="App Preview"
+                        />
+                    </PhoneShell>
 
-                    <div className="mx-auto max-w-xs">
-                        {/* Status Bar */}
-                        <div
-                            className="h-6 flex items-center px-4 text-white text-xs font-semibold rounded-t-3xl"
-                            style={{ backgroundColor: formData.primaryColor }}
-                        >
-                            9:41
-                        </div>
-
-                        {/* Phone Body */}
-                        <div className="bg-white border-8 border-gray-800 rounded-3xl shadow-lg overflow-hidden">
-                            {/* Header */}
-                            <div
-                                className="px-4 py-3 flex items-center gap-3"
-                                style={{ backgroundColor: formData.primaryColor }}
-                            >
-                                {formData.logoUrl && (
-                                    <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center flex-shrink-0 overflow-hidden">
-                                        <img
-                                            src={formData.logoUrl}
-                                            alt="Logo"
-                                            className="w-full h-full object-cover"
-                                            onError={() => { }}
-                                        />
-                                    </div>
-                                )}
-                                <h1 className="text-white font-bold text-lg flex-1 truncate">
-                                    {formData.name || "App Name"}
-                                </h1>
-                            </div>
-
-                            {/* Description */}
-                            <div
-                                className="px-4 py-2 text-sm"
-                                style={{ color: formData.secondaryColor }}
-                            >
-                                {formData.description || "App description"}
-                            </div>
-
-                            {/* Content Items */}
-                            <div className="px-4 py-4 space-y-3">
-                                {[1, 2, 3].map((i) => (
-                                    <div
-                                        key={i}
-                                        className="p-3 bg-gray-50 rounded border-l-4"
-                                        style={{
-                                            borderColor: formData.primaryColor,
-                                            fontFamily: formData.fontFamily,
-                                        }}
-                                    >
-                                        <div className="text-sm font-semibold text-gray-900">
-                                            Item {i}
-                                        </div>
-                                        <div className="text-xs text-gray-600 mt-1">
-                                            Tap to view details
-                                        </div>
-                                        <button
-                                            className="text-xs font-semibold mt-2 px-2 py-1 rounded"
-                                            style={{
-                                                color: formData.accentColor,
-                                                backgroundColor: `${formData.accentColor}15`,
-                                            }}
-                                        >
-                                            View →
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
+                    <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0, textAlign: "center" }}>
+                        Preview updates as you change settings
+                    </p>
                 </div>
             </div>
         </div>

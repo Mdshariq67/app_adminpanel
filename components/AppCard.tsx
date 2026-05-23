@@ -12,6 +12,7 @@ import {
     Loader2,
     AlertCircle,
     CheckCircle2,
+    LayoutTemplate,
 } from "lucide-react";
 import { AppConfig, BuildStatus, saveApp, deleteApp } from "@/lib/storage";
 import { getBuildStatus, getReleaseUrl } from "@/lib/github";
@@ -167,6 +168,10 @@ export default function AppCard({ app, onDelete }: AppCardProps) {
         router.push(`/apps/${appState.id}/edit`);
     };
 
+    const handleConfigureUI = () => {
+        router.push(`/apps/${appState.id}/builder`);
+    };
+
     const statusConfig = STATUS_CONFIG[appState.lastBuildStatus];
     const StatusIcon = statusConfig.icon;
 
@@ -295,6 +300,16 @@ export default function AppCard({ app, onDelete }: AppCardProps) {
                         {appState.lastBuildStatus === "success" ? "Rebuild" : "Edit"}
                     </Button>
                 </div>
+
+                <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleConfigureUI}
+                    className="w-full gap-2 mt-2 text-blue-600 border-blue-200 hover:bg-blue-50"
+                >
+                    <LayoutTemplate className="w-4 h-4" />
+                    Configure UI
+                </Button>
             </div>
         </Card>
     );
